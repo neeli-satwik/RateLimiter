@@ -11,7 +11,7 @@ class Request:
         self.headers = headers  # lower-case header name -> value, surrounding spaces trimmed
 
 
-def header(req, name):
+def header(req: Request, name: str) -> str:
     """Value of a request header (pass the name in lower case), or "" if it is absent."""
     return req.headers.get(name, "")
 
@@ -20,15 +20,15 @@ REASONS = {200: "OK", 429: "Too Many Requests"}
 out = []
 
 
-def status_line(code):
+def status_line(code: int):
     out.append("HTTP/1.1 %d %s\r\n" % (code, REASONS[code]))
 
 
-def add_header(name, value):
+def add_header(name: str, value: str):
     out.append("%s: %s\r\n" % (name, value))
 
 
-def add_header_int(name, value):
+def add_header_int(name: str, value: str):
     out.append("%s: %d\r\n" % (name, value))
 
 
@@ -42,14 +42,28 @@ WINDOW = 60     # window length in seconds
 counts = {}     # client -> [start of the window it last spoke in, requests counted in it]
 
 
-def handle(req):
+def handle(req: Request):
     # TODO 1: the client is the X-API-Key value ("x-api-key" for header()); "anonymous" if it is missing or empty.
     # TODO 2: start of the window containing req.now: floor(now / WINDOW) * WINDOW.
     # TODO 3: a client seen in an older window starts again from zero.
     # TODO 4: at LIMIT requests -> 429 with Retry-After (seconds to the window end, rounded up), NOT counted.
     #         Otherwise count the request and answer 200.
-    status_line(200)  # placeholder: lets everything through
-    end_head()
+    client = header(req, "x-api-key") or "anonymous"
+    start = math.floor(req.now / WINDOW) * WINDOW
+
+    entry = counts.get(client)
+    if entry is None or entry[0] < start:
+        entry = [start, 0]
+        counts[client] = entry
+
+    if entry[1] >= LIMIT:
+        status_line(429)
+        add_header_int("Retry-After", math.ceil(start + WINDOW - req.now))
+        end_head()
+    else:
+        entry[1] += 1
+        status_line(200)
+        end_head()
 
 def directive(line, now):
     pass
@@ -90,6 +104,5 @@ def main():
             headers[name] = headers[name] + ", " + value if name in headers else value
         handle(Request(now, method, target, headers))
     sys.stdout.write("".join(out))
-
 
 main()
