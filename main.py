@@ -62,7 +62,6 @@ def handle(req: Request):
     if (route=="login" and entry[1] >= budget["login"]) or (route=="api" and entry[2] >= budget["api"]):
         status_line(429)
         add_header_int("Retry-After", math.ceil(start + WINDOW - req.now))
-        end_head()
     else:
         if(route=="login"): entry[1] += 1
         else: entry[2] += 1
