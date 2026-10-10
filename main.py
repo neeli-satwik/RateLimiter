@@ -36,32 +36,63 @@ def end_head():
     out.append("Content-Length: 0\r\n\r\n")
 
 
-budget = {"login": 5, "api": 5}  # class -> limit per window
-WINDOW = 60     # window length in seconds
+# budget = {"login": 5, "api": 5}  # class -> limit per window
+# WINDOW = 60     # window length in seconds
 
-logs = {}       # [client, route] -> [log of timestamps]
+# logs = {}       # [client, route] -> [log of timestamps]
 
+
+# def handle_sliding_window_log(req: Request):
+#     client = header(req, "x-api-key") or "anonymous"
+#     path = req.target.split("?", 1)[0]
+#     route = "login" if req.method == "POST" and path == "/login" else "api"
+#     limit = budget[route]
+
+#     log = logs.setdefault((client, route), [])
+#     while log and log[0] <= req.now - WINDOW:
+#         log.pop(0)
+
+#     if len(log) >= limit:
+#         status_line(429)
+#         add_header_int("Retry-After", math.ceil(log[0] + WINDOW - req.now))
+#     else:
+#         log.append(req.now)
+#         status_line(200)
+
+#     add_header_int("X-RateLimit-Limit", limit)
+#     add_header_int("X-RateLimit-Remaining", limit - len(log))
+#     add_header_int("X-RateLimit-Reset", math.ceil(log[0] + WINDOW))
+#     end_head()
+
+CAPACITY = 10      # most tokens a bucket can hold
+RATE = 0.5         # tokens added per second
+EXPORT_COST = 5   # tokens a request to /export spends; every other request spends 1
+
+buckets = {}       # [client, route] -> [tokens, time the tokens were last computed]
 
 def handle(req: Request):
     client = header(req, "x-api-key") or "anonymous"
-    path = req.target.split("?", 1)[0]
-    route = "login" if req.method == "POST" and path == "/login" else "api"
-    limit = budget[route]
+    path = req.target.split("?")[0]
+    cost = EXPORT_COST if path == "/export" else 1
+    # TODO 1: a client's first request finds a FULL bucket: [CAPACITY, req.now].
+    #         Otherwise refill: tokens = min(CAPACITY, tokens + (now - last) * RATE), last = now (refused requests too).
+    # TODO 2: tokens >= cost -> subtract cost, 200. Otherwise 429 with Retry-After = (cost - tokens) / RATE, rounded up.
+    # TODO 3: X-RateLimit-Limit, -Remaining (tokens rounded down), -Reset (now + (CAPACITY - tokens) / RATE, rounded up).
+    
+    tokens, filled_last = buckets.setdefault(client, [CAPACITY, req.now])
+    tokens = min(CAPACITY, tokens + (req.now - filled_last) * RATE)
+    filled_last = req.now
 
-    log = logs.setdefault((client, route), [])
-    while log and log[0] <= req.now - WINDOW:
-        log.pop(0)
-
-    if len(log) >= limit:
-        status_line(429)
-        add_header_int("Retry-After", math.ceil(log[0] + WINDOW - req.now))
-    else:
-        log.append(req.now)
+    if tokens >= cost:
+        tokens -= cost
         status_line(200)
+    else:
+        status_line(429)
+        add_header_int("Retry-After", math.ceil((cost - tokens) / RATE))
 
-    add_header_int("X-RateLimit-Limit", limit)
-    add_header_int("X-RateLimit-Remaining", limit - len(log))
-    add_header_int("X-RateLimit-Reset", math.ceil(log[0] + WINDOW))
+    add_header_int("X-RateLimit-Limit", CAPACITY)
+    add_header_int("X-RateLimit-Remaining", math.floor(tokens))
+    add_header_int("X-RateLimit-Reset", math.ceil(req.now + (CAPACITY - tokens) / RATE))
     end_head()
 
 def directive(line, now):
