@@ -74,14 +74,10 @@ def handle(req: Request):
     client = header(req, "x-api-key") or "anonymous"
     path = req.target.split("?")[0]
     cost = EXPORT_COST if path == "/export" else 1
-    # TODO 1: a client's first request finds a FULL bucket: [CAPACITY, req.now].
-    #         Otherwise refill: tokens = min(CAPACITY, tokens + (now - last) * RATE), last = now (refused requests too).
-    # TODO 2: tokens >= cost -> subtract cost, 200. Otherwise 429 with Retry-After = (cost - tokens) / RATE, rounded up.
-    # TODO 3: X-RateLimit-Limit, -Remaining (tokens rounded down), -Reset (now + (CAPACITY - tokens) / RATE, rounded up).
-    
-    tokens, filled_last = buckets.setdefault(client, [CAPACITY, req.now])
-    tokens = min(CAPACITY, tokens + (req.now - filled_last) * RATE)
-    filled_last = req.now
+
+    bucket = buckets.setdefault(client, [CAPACITY, req.now])
+    tokens = min(CAPACITY, bucket[0] + (req.now - bucket[1]) * RATE)
+    bucket[1] = req.now
 
     if tokens >= cost:
         tokens -= cost
@@ -89,6 +85,7 @@ def handle(req: Request):
     else:
         status_line(429)
         add_header_int("Retry-After", math.ceil((cost - tokens) / RATE))
+    bucket[0] = tokens
 
     add_header_int("X-RateLimit-Limit", CAPACITY)
     add_header_int("X-RateLimit-Remaining", math.floor(tokens))
