@@ -40,39 +40,33 @@ LIMIT = 5       # requests allowed per client per window
 WINDOW = 60     # window length in seconds
 
 counts = {}     # client -> [start of the window it last spoke in, requests counted in it]
-limits = {"login": 3, "api": LIMIT}  # class -> limit per window
+LIMITS = {"login": 3, "api": LIMIT}   # budget per window for each route class
 
-def handle(req: Request):
-    # TODO 1: the route class: "login" for POST with the path (target up to "?") exactly "/login", else "api".
-    # TODO 2: the window start, then this (client, class)'s counter (stale -> zero).
-    # TODO 3: at its budget -> 429 + Retry-After and NOT counted; otherwise count it and answer 200.
-    # TODO 4: X-RateLimit-Limit, -Remaining (after counting), -Reset (window end, epoch seconds), in that order.
-
+def handle(req):
     client = header(req, "x-api-key") or "anonymous"
-    start = math.floor(req.now / WINDOW) * WINDOW
-
     path = req.target.split("?", 1)[0]
     route = "login" if req.method == "POST" and path == "/login" else "api"
-    routeLimit = limits[route]
+    budget = LIMITS[route]
 
-    entry = counts.get(client)
+    start = math.floor(req.now / WINDOW) * WINDOW
+    reset = start + WINDOW
+
+    key = (client, route)
+    entry = counts.get(key)
     if entry is None or entry[0] < start:
-        entry = [start, 0, 0]
-        counts[client] = entry
+        entry = [start, 0]
+        counts[key] = entry
 
-    if (route=="login" and entry[1] >= routeLimit) or (route=="api" and entry[2] >= routeLimit):
+    if entry[1] >= budget:
         status_line(429)
-        add_header_int("Retry-After", math.ceil(start + WINDOW - req.now))
-        end_head()
+        add_header_int("Retry-After", math.ceil(reset - req.now))
     else:
-        if(route=="login"): entry[1] += 1
-        else: entry[2] += 1
+        entry[1] += 1
         status_line(200)
 
-    add_header_int("X-RateLimit-Limit", routeLimit)
-    if(route=="login"): add_header_int("X-RateLimit-Remaining", routeLimit - entry[1])
-    else: add_header_int("X-RateLimit-Remaining", routeLimit - entry[2])
-    add_header_int("X-RateLimit-Reset", start + WINDOW)
+    add_header_int("X-RateLimit-Limit", budget)
+    add_header_int("X-RateLimit-Remaining", budget - entry[1])
+    add_header_int("X-RateLimit-Reset", reset)
     end_head()
 
 def directive(line, now):
