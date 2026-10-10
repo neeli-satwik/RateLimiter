@@ -36,11 +36,11 @@ def end_head():
     out.append("Content-Length: 0\r\n\r\n")
 
 
-LIMIT = 5       # requests allowed per client per window
+budget = {"login": 3, "api": 10}  # class -> limit per window
 WINDOW = 60     # window length in seconds
 
 counts = {}     # client -> [start of the window it last spoke in, requests counted in it]
-budget = {"login": 3, "api": LIMIT}  # class -> limit per window
+
 
 def handle(req: Request):
     # TODO 1: the route class: "login" for POST with the path (target up to "?") exactly "/login", else "api".
