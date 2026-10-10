@@ -40,33 +40,38 @@ LIMIT = 5       # requests allowed per client per window
 WINDOW = 60     # window length in seconds
 
 counts = {}     # client -> [start of the window it last spoke in, requests counted in it]
-LIMITS = {"login": 3, "api": LIMIT}   # budget per window for each route class
+budget = {"login": 3, "api": LIMIT}  # class -> limit per window
 
-def handle(req):
+def handle(req: Request):
+    # TODO 1: the route class: "login" for POST with the path (target up to "?") exactly "/login", else "api".
+    # TODO 2: the window start, then this (client, class)'s counter (stale -> zero).
+    # TODO 3: at its budget -> 429 + Retry-After and NOT counted; otherwise count it and answer 200.
+    # TODO 4: X-RateLimit-Limit, -Remaining (after counting), -Reset (window end, epoch seconds), in that order.
+
     client = header(req, "x-api-key") or "anonymous"
+    start = math.floor(req.now / WINDOW) * WINDOW
+
     path = req.target.split("?", 1)[0]
     route = "login" if req.method == "POST" and path == "/login" else "api"
-    budget = LIMITS[route]
 
-    start = math.floor(req.now / WINDOW) * WINDOW
-    reset = start + WINDOW
-
-    key = (client, route)
-    entry = counts.get(key)
+    entry = counts.get(client)
     if entry is None or entry[0] < start:
-        entry = [start, 0]
-        counts[key] = entry
+        entry = [start, 0, 0]
+        counts[client] = entry
 
-    if entry[1] >= budget:
+    if (route=="login" and entry[1] >= budget["login"]) or (route=="api" and entry[2] >= budget["api"]):
         status_line(429)
-        add_header_int("Retry-After", math.ceil(reset - req.now))
+        add_header_int("Retry-After", math.ceil(start + WINDOW - req.now))
+        end_head()
     else:
-        entry[1] += 1
+        if(route=="login"): entry[1] += 1
+        else: entry[2] += 1
         status_line(200)
 
-    add_header_int("X-RateLimit-Limit", budget)
-    add_header_int("X-RateLimit-Remaining", budget - entry[1])
-    add_header_int("X-RateLimit-Reset", reset)
+    remaining = budget[route] - (entry[1] if route=="login" else entry[2])
+    add_header_int("X-RateLimit-Limit", budget[route])
+    add_header_int("X-RateLimit-Remaining", remaining)
+    add_header_int("X-RateLimit-Reset", start + WINDOW)
     end_head()
 
 def directive(line, now):
