@@ -39,38 +39,29 @@ def end_head():
 budget = {"login": 3, "api": 10}  # class -> limit per window
 WINDOW = 60     # window length in seconds
 
-counts = {}     # client -> [start of the window it last spoke in, requests counted in it]
+logs = {}       # [client, route] -> [log of timestamps]
 
 
 def handle(req: Request):
-    # TODO 1: the route class: "login" for POST with the path (target up to "?") exactly "/login", else "api".
-    # TODO 2: the window start, then this (client, class)'s counter (stale -> zero).
-    # TODO 3: at its budget -> 429 + Retry-After and NOT counted; otherwise count it and answer 200.
-    # TODO 4: X-RateLimit-Limit, -Remaining (after counting), -Reset (window end, epoch seconds), in that order.
-
     client = header(req, "x-api-key") or "anonymous"
-    start = math.floor(req.now / WINDOW) * WINDOW
-
     path = req.target.split("?", 1)[0]
     route = "login" if req.method == "POST" and path == "/login" else "api"
+    limit = budget[route]
 
-    entry = counts.get(client)
-    if entry is None or entry[0] < start:
-        entry = [start, 0, 0]
-        counts[client] = entry
+    log = logs.setdefault((client, route), [])
+    while log and log[0] <= req.now - WINDOW:
+        log.pop(0)
 
-    if (route=="login" and entry[1] >= budget["login"]) or (route=="api" and entry[2] >= budget["api"]):
+    if len(log) >= limit:
         status_line(429)
-        add_header_int("Retry-After", math.ceil(start + WINDOW - req.now))
+        add_header_int("Retry-After", math.ceil(log[0] + WINDOW - req.now))
     else:
-        if(route=="login"): entry[1] += 1
-        else: entry[2] += 1
+        log.append(req.now)
         status_line(200)
 
-    remaining = budget[route] - (entry[1] if route=="login" else entry[2])
-    add_header_int("X-RateLimit-Limit", budget[route])
-    add_header_int("X-RateLimit-Remaining", remaining)
-    add_header_int("X-RateLimit-Reset", start + WINDOW)
+    add_header_int("X-RateLimit-Limit", limit)
+    add_header_int("X-RateLimit-Remaining", limit - len(log))
+    add_header_int("X-RateLimit-Reset", math.ceil(log[0] + WINDOW))
     end_head()
 
 def directive(line, now):
