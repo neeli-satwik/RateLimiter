@@ -36,7 +36,7 @@ def end_head():
     out.append("Content-Length: 0\r\n\r\n")
 
 
-budget = {"login": 3, "api": 10}  # class -> limit per window
+budget = {"login": 5, "api": 5}  # class -> limit per window
 WINDOW = 60     # window length in seconds
 
 logs = {}       # [client, route] -> [log of timestamps]
